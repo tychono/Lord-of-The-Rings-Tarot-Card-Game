@@ -1,0 +1,60 @@
+import matplotlib.pyplot as plt
+from matplotlib.backs.back_pfd
+import pdfPages from matplotlib.patches
+import rectangle, FancyBboxPatch
+import numpy as np
+import textwrap
+
+CARD WIDTH =2.75
+CARD_HEIGHT = 4.75
+MARGIN = 0.25
+GRID_SPACING = 0.1
+
+PAGE_WIDTH = 8.5
+PAGE_HEIGHT = 11.0
+COL = 3
+ROWS = 3
+
+BG_GREEN = '#228B22'
+LIGHT_GREEN = '#90EE90'
+GOLD = '#DAA520'
+BROWN = '#8B4513'
+WHITE = 'WHITE'
+
+
+major arcana = ["0 - The fool", 
+"1 - The Magician", 
+"2 - The High Priestess",
+"3 - The Empress", 
+"4 - The Emperor", 
+"5 - The Hierophant", 
+"6 - The Lovers",
+"7 - The Charoit",
+"8 - Strenght",
+"9 - The Hermit",
+"10 - Wheel of Fortune",
+"11 - Justice"
+"12 - The Hanged Man",
+"13 - Death ",
+"14 - Temperance",
+"15 - Devil",
+"16 - The Devil",
+"17 - The Tower",
+"18 - The Star",
+"19 - The Moon", 
+"20 - Judgement",
+"21 - The World",
+
+wands = 
+[f"{ace] of wands
+[f"{two] of wands
+[f"{three] of wands
+[f"{four] of wands
+[f"{five] of wands
+[f"{six] of wands
+[f"{seven] of wands
+[f"{eight] of wands
+[f"{nine] of wands
+[f"{ten] of wands
+
+
