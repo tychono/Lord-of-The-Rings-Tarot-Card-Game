@@ -1,0 +1,374 @@
+# This is a simplified implementation of an online 4-player Lord of the Rings Tarot card game based on the described rules.
+# For simplicity, the deck is partially defined with made-up names for missing cards. Alignments are assigned based on available data.
+# The game is turn-based, using sockets for networking. Run server.py first, then 4 client.py instances.
+# This is console-based; input moves via text.
+# Full rules implemented as per the description, but simplified where necessary (e.g., no graphical UI).
+
+# shared.py - Shared classes and deck definition
+
+from enum import Enum
+import random
+import pickle
+import socket
+import threading
+import json  # For safer serialization, but using pickle for simplicity
+
+class Alignment(Enum):
+    LIGHT = 'light'
+    DARK = 'dark'
+    NEUTRAL = 'neutral'
+
+class Card:
+    def __init__(self, name, arcana, value, suit=None, alignment=Alignment.LIGHT):
+        self.name = name
+        self.arcana = arcana  # 'major' or 'minor'
+        self.value = value  # int, for major 0-21, minor 1-14 (ace=1, ..., page=11, knight=12, queen=13, king=14)
+        self.suit = suit
+        self.alignment = alignment
+
+    def __str__(self):
+        suit_str = f" of {self.suit}" if self.suit else ""
+        return f"{self.name} ({self.arcana}, value={self.value}{suit_str}, {self.alignment.value})"
+
+# Deck definition - partial from sources, made-up for missing
+deck_template = [
+    # Major Arcana (0-21, names from forum, alignments assigned)
+    Card('The Fool - Gollum', 'major', 0, None, Alignment.NEUTRAL),
+    Card('The Magician - Gandalf', 'major', 1, None, Alignment.LIGHT),
+    Card('The High Priestess - Galadriel', 'major', 2, None, Alignment.LIGHT),
+    Card('The Empress - Arwen', 'major', 3, None, Alignment.LIGHT),
+    Card('The Emperor - Aragorn', 'major', 4, None, Alignment.LIGHT),
+    Card('The Hierophant - Aragorn Coronation', 'major', 5, None, Alignment.LIGHT),
+    Card('The Lovers - Aragorn and Arwen', 'major', 6, None, Alignment.LIGHT),
+    Card('The Chariot - Aragorn Riding', 'major', 7, None, Alignment.LIGHT),
+    Card('Strength - Arwen Vision', 'major', 8, None, Alignment.LIGHT),
+    Card('The Hermit - Sam vs Shelob', 'major', 9, None, Alignment.LIGHT),
+    Card('Wheel of Fortune - Eye of Sauron', 'major', 10, None, Alignment.DARK),  # Assumed One Ring related
+    Card('Justice - Gandalf Fighting', 'major', 11, None, Alignment.LIGHT),
+    Card('The Hanged Man - Treebeard', 'major', 12, None, Alignment.NEUTRAL),
+    Card('Death - Witchking', 'major', 13, None, Alignment.DARK),
+    Card('Temperance - Galadriel', 'major', 14, None, Alignment.LIGHT),
+    Card('The Devil - Nazgul', 'major', 15, None, Alignment.DARK),
+    Card('The Tower - Eye and Tower', 'major', 16, None, Alignment.DARK),
+    Card('The Star - Arwen', 'major', 17, None, Alignment.LIGHT),
+    Card('The Moon - Saruman', 'major', 18, None, Alignment.DARK),
+    Card('The Sun - Aragorn', 'major', 19, None, Alignment.LIGHT),
+    Card('Judgement - Boromir Horn', 'major', 20, None, Alignment.LIGHT),
+    Card('The World - Fellowship Poster', 'major', 21, None, Alignment.LIGHT),
+
+    # Swords (from source)
+    Card('Ace of Swords - Gwaihir the Great Eagle', 'minor', 1, 'swords', Alignment.LIGHT),
+    Card('Two of Swords - Council of Elrond', 'minor', 2, 'swords', Alignment.LIGHT),
+    Card('Three of Swords - Sam comforts Frodo', 'minor', 3, 'swords', Alignment.LIGHT),
+    Card('Four of Swords - Attack of the Barrow-wights', 'minor', 4, 'swords', Alignment.DARK),
+    Card('Five of Swords - Pippin and Merry captured by orcs', 'minor', 5, 'swords', Alignment.DARK),
+    Card('Six of Swords - Bilbo and Dwarves escape Elves', 'minor', 6, 'swords', Alignment.LIGHT),
+    Card('Seven of Swords - William, Tom, and Bert', 'minor', 7, 'swords', Alignment.LIGHT),
+    Card('Eight of Swords - Frodo captured by Shelob', 'minor', 8, 'swords', Alignment.DARK),
+    Card('Nine of Swords - The Nine Nazgûl', 'minor', 9, 'swords', Alignment.DARK),
+    Card('Ten of Swords - The Eye of Sauron', 'minor', 10, 'swords', Alignment.DARK),
+    Card('Page of Swords - Denethor with Pippin', 'minor', 11, 'swords', Alignment.LIGHT),
+    Card('Knight of Swords - Battle for Minas Tirith', 'minor', 12, 'swords', Alignment.LIGHT),
+    Card('Queen of Swords - Éowyn slays Witch-king', 'minor', 13, 'swords', Alignment.LIGHT),
+    Card('King of Swords - Aragorn crowned King', 'minor', 14, 'swords', Alignment.LIGHT),
+
+    # Wands (from source)
+    Card('Ace of Wands - The One Ring forged', 'minor', 1, 'wands', Alignment.LIGHT),
+    Card('Two of Wands - Gandalf vs Sauron', 'minor', 2, 'wands', Alignment.DARK),
+    Card('Three of Wands - Aragorn, Gimli, Legolas search', 'minor', 3, 'wands', Alignment.LIGHT),
+    Card('Four of Wands - Gandalf shakes Théoden', 'minor', 4, 'wands', Alignment.LIGHT),
+    Card('Five of Wands - Bilbo fights spiders', 'minor', 5, 'wands', Alignment.DARK),
+    Card('Six of Wands - Battle of the Five Armies', 'minor', 6, 'wands', Alignment.LIGHT),
+    Card('Seven of Wands - Aragorn defends at Weathertop', 'minor', 7, 'wands', Alignment.LIGHT),
+    Card('Eight of Wands - Gandalf and Shadowfax', 'minor', 8, 'wands', Alignment.LIGHT),
+    Card('Nine of Wands - Gandalf confronts Saruman', 'minor', 9, 'wands', Alignment.DARK),
+    Card('Ten of Wands - Sam carries Frodo', 'minor', 10, 'wands', Alignment.DARK),
+    Card('Page of Wands - Radagast delivers message', 'minor', 11, 'wands', Alignment.LIGHT),
+    Card('Knight of Wands - Faramir prepares battle', 'minor', 12, 'wands', Alignment.LIGHT),
+    Card('Queen of Wands - Théodwyn', 'minor', 13, 'wands', Alignment.NEUTRAL),
+    Card('King of Wands - Théoden and Wormtongue', 'minor', 14, 'wands', Alignment.DARK),
+
+    # Cups (made-up names and alignments, similar distribution)
+    Card('Ace of Cups - Bilbo\'s Birthday Party', 'minor', 1, 'cups', Alignment.LIGHT),
+    Card('Two of Cups - Frodo and Sam Friendship', 'minor', 2, 'cups', Alignment.LIGHT),
+    Card('Three of Cups - Merry and Pippin Feast', 'minor', 3, 'cups', Alignment.LIGHT),
+    Card('Four of Cups - Gollum\'s Betrayal', 'minor', 4, 'cups', Alignment.DARK),
+    Card('Five of Cups - Boromir\'s Death', 'minor', 5, 'cups', Alignment.DARK),
+    Card('Six of Cups - Hobbits in the Shire', 'minor', 6, 'cups', Alignment.LIGHT),
+    Card('Seven of Cups - Visions in Galadriel\'s Mirror', 'minor', 7, 'cups', Alignment.NEUTRAL),
+    Card('Eight of Cups - Frodo Leaves for Grey Havens', 'minor', 8, 'cups', Alignment.LIGHT),
+    Card('Nine of Cups - Feast in Minas Tirith', 'minor', 9, 'cups', Alignment.LIGHT),
+    Card('Ten of Cups - Aragorn and Arwen Wedding', 'minor', 10, 'cups', Alignment.LIGHT),
+    Card('Page of Cups - Young Frodo', 'minor', 11, 'cups', Alignment.LIGHT),
+    Card('Knight of Cups - Legolas the Elf', 'minor', 12, 'cups', Alignment.LIGHT),
+    Card('Queen of Cups - Galadriel', 'minor', 13, 'cups', Alignment.LIGHT),
+    Card('King of Cups - Elrond', 'minor', 14, 'cups', Alignment.LIGHT),
+
+    # Coins (made-up names and alignments, similar distribution)
+    Card('Ace of Coins - The Shire Harvest', 'minor', 1, 'coins', Alignment.LIGHT),
+    Card('Two of Coins - Bilbo\'s Treasures', 'minor', 2, 'coins', Alignment.LIGHT),
+    Card('Three of Coins - Dwarves in Moria', 'minor', 3, 'coins', Alignment.DARK),
+    Card('Four of Coins - Smaug\'s Hoard', 'minor', 4, 'coins', Alignment.DARK),
+    Card('Five of Coins - Hobbits in Poverty', 'minor', 5, 'coins', Alignment.DARK),
+    Card('Six of Coins - Giving Alms in Gondor', 'minor', 6, 'coins', Alignment.LIGHT),
+    Card('Seven of Coins - Farming in the Shire', 'minor', 7, 'coins', Alignment.LIGHT),
+    Card('Eight of Coins - Smithing in Rivendell', 'minor', 8, 'coins', Alignment.LIGHT),
+    Card('Nine of Coins - Wealth of Lothlorien', 'minor', 9, 'coins', Alignment.LIGHT),
+    Card('Ten of Coins - Kingdom of Gondor', 'minor', 10, 'coins', Alignment.LIGHT),
+    Card('Page of Coins - Gimli the Dwarf', 'minor', 11, 'coins', Alignment.LIGHT),
+    Card('Knight of Coins - Boromir of Gondor', 'minor', 12, 'coins', Alignment.NEUTRAL),
+    Card('Queen of Coins - Arwen Evenstar', 'minor', 13, 'coins', Alignment.LIGHT),
+    Card('King of Coins - Thorin Oakenshield', 'minor', 14, 'coins', Alignment.LIGHT),
+]
+
+# Note: This deck has 78 cards. You can replace made-up ones with accurate ones if available.
+
+class Game:
+    def __init__(self, num_players=4):
+        self.num_players = num_players
+        self.players = [[] for _ in range(num_players)]  # hands
+        self.draw_pile = deck_template[:]  # copy
+        random.shuffle(self.draw_pile)
+        self.journey_pile = []  # last card on top (index -1)
+        self.ring_pile = []  # major cards, last on top
+        self.current_turn = 0
+        self.ringbearer = None  # index of player or None
+        self.dark_points = [0] for _ in range(num_players)
+        self.victory_points = [0] for _ in range(num_players)
+        self.hand_number = 1  # 1 to 3
+        self.drew_this_turn = False
+        self.game_over = False
+
+    def deal(self):
+        for _ in range(8):
+            for p in range(self.num_players):
+                if self.draw_pile:
+                    self.players[p].append(self.draw_pile.pop(0))
+
+    def get_top_journey(self):
+        if self.journey_pile:
+            return self.journey_pile[-1]
+        return None
+
+    def get_top_ring(self):
+        if self.ring_pile:
+            return self.ring_pile[-1]
+        return None
+
+    def can_play_to_ring(self, card):
+        if card.arcana != 'major':
+            return False
+        top = self.get_top_ring()
+        if not top:
+            return True
+        if card.value == 0:  # Fool
+            return True
+        return card.value > top.value
+
+    def play_to_ring(self, player_idx, card_idx):
+        card = self.players[player_idx].pop(card_idx)
+        self.ring_pile.append(card)
+        self.ringbearer = player_idx
+        points = 3 if card.alignment == Alignment.DARK else 0
+        if card.alignment == Alignment.NEUTRAL:
+            # Assume player chooses, for simplicity assume dark if beneficial, but here prompt later
+            points = 3 if input("Play as dark? (y/n): ") == 'y' else 0
+        self.dark_points[player_idx] += points
+        return card
+
+    def can_play_to_journey(self, card):
+        top = self.get_top_journey()
+        if not top:
+            return True
+        if card.arcana == 'major':
+            return True
+        if card.suit == top.suit or card.value == top.value:
+            return True
+        return False
+
+    def play_to_journey(self, player_idx, card_idx, new_suit=None):
+        card = self.players[player_idx].pop(card_idx)
+        if card.arcana == 'major' and new_suit is None:
+            new_suit = input("Declare new suit (cups, wands, swords, coins): ")
+        self.journey_pile.append(card)
+        points = 2 if card.alignment == Alignment.DARK else 0
+        if card.alignment == Alignment.NEUTRAL:
+            points = 2 if input("Play as dark? (y/n): ") == 'y' else 0
+        self.dark_points[player_idx] += points
+        return card
+
+    def draw_card(self, player_idx):
+        if self.draw_pile:
+            self.players[player_idx].append(self.draw_pile.pop(0))
+            self.drew_this_turn = True
+
+    def end_turn(self):
+        self.current_turn = (self.current_turn + 1) % self.num_players
+        self.drew_this_turn = False
+
+    def reallocate_dark_point(self, from_idx, to_idx):
+        if self.ringbearer == self.current_turn:
+            if self.dark_points[from_idx] > 0:
+                self.dark_points[from_idx] -= 1
+                self.dark_points[to_idx] += 1
+
+    def check_hand_end(self):
+        for p in range(self.num_players):
+            if not self.players[p]:
+                # End hand
+                # Add dark points for dark cards in hand
+                for i in range(self.num_players):
+                    for card in self.players[i]:
+                        if card.alignment == Alignment.DARK:
+                            self.dark_points[i] += 1
+                # Award VP
+                self.victory_points[p] += 5  # going out first
+                if self.ringbearer is not None:
+                    self.victory_points[self.ringbearer] += 5
+                max_dark = max(self.dark_points)
+                min_dark = min(self.dark_points)
+                for i in range(self.num_players):
+                    if self.dark_points[i] == max_dark:
+                        self.victory_points[i] += 5
+                    if self.dark_points[i] == min_dark:
+                        self.victory_points[i] += 5
+                # Reset for next hand
+                self.hand_number += 1
+                if self.hand_number > 3:
+                    self.game_over = True
+                else:
+                    self.reset_hand()
+                return True
+        return False
+
+    def reset_hand(self):
+        self.draw_pile = deck_template[:]
+        random.shuffle(self.draw_pile)
+        self.players = [[] for _ in range(self.num_players)]
+        self.deal()
+        self.journey_pile = []
+        self.ring_pile = []
+        self.ringbearer = None
+        self.dark_points = [0 for _ in range(self.num_players)]
+        self.current_turn = 0
+
+    def get_state(self, player_idx):
+        # Return state for player
+        state = {
+            'hand': [str(c) for c in self.players[player_idx]],
+            'journey_top': str(self.get_top_journey()) if self.get_top_journey() else None,
+            'ring_top': str(self.get_top_ring()) if self.get_top_ring() else None,
+            'ringbearer': self.ringbearer,
+            'dark_points': self.dark_points,
+            'victory_points': self.victory_points,
+            'current_turn': self.current_turn,
+            'hand_number': self.hand_number,
+            'game_over': self.game_over,
+            'drew_this_turn': self.drew_this_turn,
+        }
+        return state
+
+# server.py
+
+PORT = 5555
+HOST = 'localhost'
+
+class Server:
+    def __init__(self):
+        self.game = Game()
+        self.game.deal()
+        self.sockets = []
+
+    def handle_client(self, conn, player_idx):
+        while not self.game.game_over:
+            try:
+                data = pickle.load(conn.makefile('rb', buffering=1024))
+                if self.game.current_turn == player_idx:
+                    action = data['action']
+                    if action == 'play_ring':
+                        card_idx = data['card_idx']
+                        if 0 <= card_idx < len(self.game.players[player_idx]):
+                            card = self.game.players[player_idx][card_idx]
+                            if self.game.can_play_to_ring(card):
+                                self.game.play_to_ring(player_idx, card_idx)
+                    elif action == 'play_journey':
+                        card_idx = data['card_idx']
+                        new_suit = data.get('new_suit')
+                        if 0 <= card_idx < len(self.game.players[player_idx]):
+                            card = self.game.players[player_idx][card_idx]
+                            if self.game.can_play_to_journey(card):
+                                self.game.play_to_journey(player_idx, card_idx, new_suit)
+                    elif action == 'draw':
+                        if not self.game.drew_this_turn:
+                            self.game.draw_card(player_idx)
+                    elif action == 'pass':
+                        pass
+                    elif action == 'reallocate':
+                        from_idx = data['from']
+                        to_idx = data['to']
+                        self.game.reallocate_dark_point(from_idx, to_idx)
+                    self.game.check_hand_end()
+                    self.game.end_turn()
+            except Exception as e:
+                print(e)
+                break
+            state = self.game.get_state(player_idx)
+            conn.send(pickle.dumps(state))
+        conn.close()
+
+    def start(self):
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind((HOST, PORT))
+        server.listen(4)
+        print("Server started")
+        for i in range(4):
+            conn, addr = server.accept()
+            self.sockets.append(conn)
+            threading.Thread(target=self.handle_client, args=(conn, i)).start()
+
+if __name__ == '__main__':
+    s = Server()
+    s.start()
+
+# client.py
+
+import sys
+
+class Client:
+    def __init__(self, player_name):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect((HOST, PORT))
+        self.player_name = player_name
+        self.player_idx = None  # Assigned by order of connection
+
+    def run(self):
+        while True:
+            state = pickle.loads(self.sock.recv(1024 * 10))
+            print(f"State: {json.dumps(state, indent=4)}")
+            if state['game_over']:
+                print("Game over. Victory points: ", state['victory_points'])
+                break
+            if state['current_turn'] != self.player_idx:  # Wait for turn
+                continue
+            print("Your turn.")
+            action = input("Action (play_ring, play_journey, draw, pass, reallocate): ")
+            data = {'action': action}
+            if action in ['play_ring', 'play_journey']:
+                card_idx = int(input("Card index: "))
+                data['card_idx'] = card_idx
+                if action == 'play_journey' and 'major' in state['hand'][card_idx]:
+                    new_suit = input("New suit: ")
+                    data['new_suit'] = new_suit
+            elif action == 'reallocate':
+                from_idx = int(input("From player: "))
+                to_idx = int(input("To player: "))
+                data['from'] = from_idx
+                data['to'] = to_idx
+            pickle.dump(data, self.sock.makefile('wb'))
+            self.sock.flush()
+
+if __name__ == '__main__':
+    name = input("Player name: ")
+    c = Client(name)
+    c.player_idx = int(input("Enter your player index (0-3): "))  # Manual for simplicity
+    c.run()
